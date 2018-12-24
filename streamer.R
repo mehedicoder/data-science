@@ -140,6 +140,12 @@ term_tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i],
 median_tfidf <- summary(term_tfidf)[3]
 dtmTopicModeling <- dtm[, term_tfidf >= median_tfidf]
 
+#define a function for harmonic mean
+harmonicMeanCalc <- function(logLikelihoods, precision=2000L) {
+  llMed <- median(logLikelihoods)
+  as.double(llMed - log(mean(exp(-mpfr(logLikelihoods,
+                                       prec = precision) + llMed))))
+}
 
 
 
