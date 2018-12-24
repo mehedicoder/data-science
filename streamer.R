@@ -92,12 +92,6 @@ if(!batch_processing) {
 rt <- select(rt, text)
 
 
-## arrange descending by prob estimates, for control purposes
-## ToDo: Remove this line
-#data[order(-data$prob_bot), ]
-
-
-
 ## Package "tidytext" uses methods from packages NLP, tm, topicmodels
 ## -> Wraps needed function and is also 'tidy'!
 if(require("tidytext")==FALSE) install.packages("tidytext")
@@ -107,18 +101,45 @@ library("tidytext")
 if(require("stringr")==FALSE) install.packages("stringr")
 library("stringr")
 
+## Package stringr contains functions for cleaning text
+if(require("tm")==FALSE) install.packages("tm")
+library("tm")
+
 # Clean text to remove odd characters/emojs
-rt$text <- sapply(rt$text,function(row) iconv(row, "latin1", "ASCII", sub=""))
+rt$text <- base::sapply(rt$text,function(row) iconv(row, "latin1", "ASCII", sub=""))
 
+#replace hashtags
+rt$text <- stringr::str_replace_all(rt$text, "#[a-z,A-Z,0-9]*", "")
 
+## Replace URLs
+rt$text <- stringr::str_replace_all(rt$text, "http\\S+", "")
+
+## Replace retweets
+rt$text <- stringr::str_replace_all(rt$text, "RT @[a-z,A-Z,0-9]*", "")
+
+## Keep non-empty rows/remove every row with an empty string
+rt <- dplyr::filter(rt, rt$text != "")
+
+#create Vector of the corpus
 tweetCorpus <- VCorpus(VectorSource(rt$text))
 
-tweetCorpus <- tm_map(tweetCorpus, stripWhitespace)
+#remove whitespaces
+tweetCorpus <- tm::tm_map(tweetCorpus, stripWhitespace)
 
-
-dtm <- DocumentTermMatrix(tweetCorpus, control = list (tolower = TRUE, stopwords = TRUE, 
-                                                     removeNumbers = TRUE, removePunctuation = TRUE, wordLengths = c (4, 15)))
-
+#do the remaining preprocesses and create DocumentTermMatrix
+dtm <- tm::DocumentTermMatrix(tweetCorpus, control = list (tolower = TRUE, stopwords = TRUE, 
+                                                     removeNumbers = TRUE, removePunctuation = TRUE, wordLengths = c (3, 15)))
+#write DocumentTermMatrix into csv
 write.csv((as.matrix(dtm)), "dtm.csv")
+
+#Tf-idf is a approach to filter out ‘unimportant’ words from our text. This omit terms which have low frequency as well as those occurring in many documents.
+term_tfidf <- tapply(dtm$v/row_sums(dtm)[dtm$i],
+                     dtm$j, mean) * log2(nDocs(dtm)/col_sums(dtm > 0))
+
+#ensuring that the very frequent terms are omitted
+median_tfidf <- summary(term_tfidf)[3]
+dtmTopicModeling <- dtm[, term_tfidf >= median_tfidf]
+
+
 
 
