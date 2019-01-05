@@ -41,7 +41,7 @@ q <- "hillaryclinton,imwithher,realdonaldtrump,maga,electionday"
 ## of desired minutes. This method scales up to hours as well
 ## (x * 60 = x mins, x * 60 * 60 = x hours)
 ## Stream for 30 minutes
-streamtime <- 1 * 5
+streamtime <- 1 * 5 * 60
 
 ## Filename to base::save json data (backup)
 ## ToDo: Maybe change variable to an input parameter
@@ -50,10 +50,10 @@ streamtime <- 1 * 5
 filename <- "tweets.json"
 
 ## ToDo: Maybe change variable to an input parameter
-batch_processing <- FALSE
+batch_processing <- TRUE
 ## Bind bot detection to batch_processing; No Bot detection in batchmode
 ## ToDo: Either change variable to an input parameter or omit de-activation of function
-bot_detection = !batch_processing
+bot_detection = FALSE
 
 ## Batch-Processing
 ## ToDo: Mayhaps changing function call to 
@@ -182,9 +182,9 @@ rowTotals <- base::apply(dtm , 1, sum)
 dtm.new   <- dtm[rowTotals> 0, ]
 
 #define the values for LDA function
-burnin = 100
-iter = 100
-keep = 50
+burnin = 2000
+iter = 1000
+keep = 500
 
 #generate different values for k
 totalDocs <- as.integer(nrow(rt))
@@ -194,9 +194,11 @@ interval <- 10
 if (totalDocs >= 1000) { to <- as.integer(totalDocs/10)} 
 k_values <- base::seq(from, to, interval)
 
+seedNum <- as.integer(Sys.time())
+
 #run LDA for each of values of k
 fitted_many_models <- base::lapply(k_values, function(k) topicmodels::LDA(dtm.new, k = k,
-                                                                          method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep) ))
+                                                                          method = "Gibbs", control = list(alpha = 50/k, seed = seedNum, burnin = burnin, iter = iter, keep = keep) ))
 # extract loglikelihood from each topic
 logLiks_many <- base::lapply(fitted_many_models, function(L) L@logLiks[-c(1:(burnin/keep))])
 
@@ -209,7 +211,6 @@ hm_many <- base::sapply(logLiks_many, function(h) harmonicMeanCalc(h))
 k <- k_values[which.max(hm_many)]
 
 #run LDA using optimal value of k to have our final model
-seedNum <- as.integer(Sys.time())
 final_model <- topicmodels::LDA(dtm.new, k = k, method = "Gibbs", control = list( alpha = 50/k,
                                                                                   burnin = burnin, iter = iter, keep = keep, seed=seedNum))
 
@@ -236,3 +237,22 @@ utils::write.csv(ldamodel.topics, file=paste("output/LDAGibbs",k,"PerTopicPerWor
 #output: per-document-per-topic probabilities
 docTopicProbabilities <- as.data.frame(final_model@gamma)
 utils::write.csv(docTopicProbabilities,file=paste("output/LDAGibbs",k,"PerDocumentPerTopicProbabilities.csv"))
+
+if(require("LDAvis")==FALSE) install.packages("LDAvis") 
+## Load rtweet
+library("LDAvis")
+
+topicmodelVisualisation <- function(x, ...){
+  post <- topicmodels::posterior(x)
+  if (ncol(post[["topics"]]) < 3) stop("The model must contain at least 2 topics")
+  mat <- x@wordassignments
+  LDAvis::createJSON(
+    phi = post[["terms"]], 
+    theta = post[["topics"]],
+    vocab = colnames(post[["terms"]]),
+    doc.length = slam::row_sums(mat, na.rm = TRUE),
+    term.frequency = slam::col_sums(mat, na.rm = TRUE)
+  )
+}
+
+LDAvis::serVis(topicmodelVisualisation(final_model))
