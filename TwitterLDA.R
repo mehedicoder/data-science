@@ -50,7 +50,7 @@ streamtime <- 1 * 5
 filename <- "tweets.json"
 
 ## ToDo: Maybe change variable to an input parameter
-batch_processing <- TRUE
+batch_processing <- FALSE
 ## Bind bot detection to batch_processing; No Bot detection in batchmode
 ## ToDo: Either change variable to an input parameter or omit de-activation of function
 bot_detection = !batch_processing
@@ -61,25 +61,25 @@ bot_detection = !batch_processing
 if(batch_processing) {
   rt <- rtweet::parse_stream(path = filename)
   users <- rt
-  } else {
-## ToDo: Mayhaps changing function call to 
-## "rtweet::stream_tweets(q = q, timeout = streamtime, file_name = filename, verbose = FALSE)"
+} else {
+  ## ToDo: Mayhaps changing function call to 
+  ## "rtweet::stream_tweets(q = q, timeout = streamtime, file_name = filename, verbose = FALSE)"
   rt <- rtweet::stream_tweets(q = q, timeout = streamtime, file_name = filename)
   users <- rtweet::users_data(rt)
 }
 
 if(bot_detection) {
-## Feed User_IDs to Tweetbotornot, get back User_IDs and prob of being bot
-data <- tweetbotornot(users$user_id, fast = TRUE)
-
-## Threshold of a row being considered a bot
-## ToDo: Maybe change variable to an input parameter
-threshold <- 0.50
-
-bots <- dplyr::filter(data, prob_bot > threshold)
-
-## Delete bots from Dataset
-rt <- dplyr::anti_join(rt,bots,by="user_id")
+  ## Feed User_IDs to Tweetbotornot, get back User_IDs and prob of being bot
+  data <- tweetbotornot(users$user_id, fast = TRUE)
+  
+  ## Threshold of a row being considered a bot
+  ## ToDo: Maybe change variable to an input parameter
+  threshold <- 0.50
+  
+  bots <- dplyr::filter(data, prob_bot > threshold)
+  
+  ## Delete bots from Dataset
+  rt <- dplyr::anti_join(rt,bots,by="user_id")
 }
 
 #write data to bot-tweet filtered json if we stream from twitter.com only; 
@@ -124,16 +124,34 @@ rt$text <- stringr::str_replace_all(rt$text, "RT @[a-z,A-Z,0-9]*", "")
 rt <- dplyr::filter(rt, rt$text != " ")
 
 #create Vector of the corpus
-tweetCorpus <- VCorpus(VectorSource(rt$text))
+tweetCorpus <- tm::VCorpus(VectorSource(rt$text))
+
+#remove custom list of stopword
+customStopwords <- c("can", "say","one","way","use",
+                     "also","howev","tell","will",
+                     "much","need","take","tend","even",
+                     "like","particular","rather","said",
+                     "get","well","make","ask","come","end",
+                     "first","two","help","often","may",
+                     "might","see","someth","thing","point",
+                     "post","look","right","now","think","‘ve ",
+                     "‘re ","anoth","put","set","new","good",
+                     "want","sure","kind","larg","yes,","day","etc",
+                     "quit","sinc","attempt","lack","seen","awar",
+                     "littl","ever","moreov","though","found","abl",
+                     "enough","far","earli","away","achiev","draw",
+                     "last","never","brief","bit","entir","brief",
+                     "great","lot")
+tweetCorpus <- tm::tm_map(tweetCorpus, removeWords, customStopwords)
 
 #remove whitespaces
 tweetCorpus <- tm::tm_map(tweetCorpus, stripWhitespace)
 
 #do the remaining preprocesses and create DocumentTermMatrix
 dtm <- tm::DocumentTermMatrix(tweetCorpus, control = list (tolower = TRUE, stopwords = TRUE, 
-                                                     removeNumbers = TRUE, removePunctuation = TRUE, wordLengths = c (3, 15)))
+                                                           removeNumbers = TRUE, removePunctuation = TRUE, wordLengths = c (3, 15)))
 #write DocumentTermMatrix into csv
-write.csv((as.matrix(dtm)), "dtm.csv")
+utils::write.csv((as.matrix(dtm)), "dtm.csv")
 
 ## Data structures and algorithms for sparse arrays and matrices, based on index arrays and simple triplet representations, respectively.
 if(require("slam")==FALSE) install.packages("slam")
@@ -154,7 +172,7 @@ library("Rmpfr")
 harmonicMeanCalc <- function(logLikelihoods, precision=2000L) {
   llMed <- Rmpfr::median(logLikelihoods)
   as.double(llMed - log(Rmpfr::mean(exp(-Rmpfr::mpfr(logLikelihoods,
-                                       prec = precision) + llMed))))
+                                                     prec = precision) + llMed))))
 }
 
 #Find the sum of words in each Document
@@ -168,40 +186,53 @@ burnin = 100
 iter = 100
 keep = 50
 
-#generates different values for k
-k_values <- base::seq(2, 100, 10)
+#generate different values for k
+totalDocs <- as.integer(nrow(rt))
+to <- totalDocs
+from <- 2
+interval <- 10
+if (totalDocs >= 1000) { to <- as.integer(totalDocs/10)} 
+k_values <- base::seq(from, to, interval)
 
 #run LDA for each of values of k
 fitted_many_models <- base::lapply(k_values, function(k) topicmodels::LDA(dtm.new, k = k,
-                                            method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep) ))
+                                                                          method = "Gibbs", control = list(burnin = burnin, iter = iter, keep = keep) ))
 # extract loglikelihood from each topic
 logLiks_many <- base::lapply(fitted_many_models, function(L) L@logLiks[-c(1:(burnin/keep))])
 
 # compute harmonic means
 hm_many <- base::sapply(logLiks_many, function(h) harmonicMeanCalc(h))
 
-graphics.off()
-par("mar")
-plot(k_values, hm_many, type = "l")
+#graphics.off()
+#par("mar")
+#plot(k_values, hm_many, type = "l")
 k <- k_values[which.max(hm_many)]
 
-#run LDA using optimal value of k to have the our final model
-seedNum <- 42
-final_model <- topicmodels::LDA(dtm.new, k = k, method = "Gibbs", control = list(
-  burnin = burnin, iter = iter, keep = keep, seed=seedNum))
+#run LDA using optimal value of k to have our final model
+seedNum <- as.integer(Sys.time())
+final_model <- topicmodels::LDA(dtm.new, k = k, method = "Gibbs", control = list( alpha = 50/k,
+                                                                                  burnin = burnin, iter = iter, keep = keep, seed=seedNum))
 
 #writing out results...
 
-#output: docs to topics 
-ldamodel.topics <- as.matrix(topicmodels::topics(final_model))
-write.csv(ldamodel.topics, file=paste("LDAGibbs",k,"DocsToTopics.csv"))
+print ("Prior-Number of topics(k): " + as.String(final_model@k))
+print ("Prior-Alpha: " + as.String(final_model@alpha  ))
 
+mainDir <- getwd()
+dir.create(file.path(mainDir, "output"), showWarnings = FALSE)
 
-#outpu: top 8 terms in each topic
+#output: list of  words
+ldamodel.words <- as.array(final_model@terms)  
+utils::write.csv(ldamodel.words, file=paste("output/LDAGibbs",k,"Words.csv"))
+
+#output: top 8 terms in each topic
 ldamodel.terms <- as.matrix(topicmodels::terms(final_model,8))
-write.csv(ldamodel.terms, file=paste("LDAGibbs",k,"TopicsToTerms.csv"))
+utils::write.csv(ldamodel.terms, file=paste("output/LDAGibbs",k,"TopicsToTermsMap.csv"))
 
+#output: per-topic-per-word probabilities (beta)
+ldamodel.topics <- as.data.frame(final_model@beta)
+utils::write.csv(ldamodel.topics, file=paste("output/LDAGibbs",k,"PerTopicPerWordProbabilities.csv"))
 
-#output: probabilities associated with each topic assignment
+#output: per-document-per-topic probabilities
 docTopicProbabilities <- as.data.frame(final_model@gamma)
-write.csv(docTopicProbabilities,file=paste("LDAGibbs",k,"DocTopicProbabilities.csv"))
+utils::write.csv(docTopicProbabilities,file=paste("output/LDAGibbs",k,"PerDocumentPerTopicProbabilities.csv"))
